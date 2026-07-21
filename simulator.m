@@ -54,11 +54,35 @@ planes_LEO = 6;
 sats_per_plane_LEO = 10;
 n_LEO = sqrt(GM / a_LEO^3);
 
+%% 初始化量測誤差模型
+sats_per_system = [planes_GPS * sats_per_plane_GPS, ...
+                   planes_GLO * sats_per_plane_GLO, ...
+                   planes_GAL * sats_per_plane_GAL, ...
+                   planes_LEO * sats_per_plane_LEO];
+error_model = initializeMeasurementErrorModel(t_array, sats_per_system);
+
 %% 初始化影片寫入器
 video_filename = 'orbit_animation.mp4';
-v = VideoWriter(video_filename, 'MPEG-4');
-v.FrameRate = 12; 
-open(v);
+write_video = true;
+try
+    v = VideoWriter(video_filename, 'MPEG-4');
+    v.FrameRate = 12;
+    open(v);
+catch ME
+    warning('GPSsimulator:VideoFallback', '無法寫入 %s：%s。改用帶時間戳的影片檔名。', video_filename, ME.message);
+    [~, base_name, ext_name] = fileparts(video_filename);
+    timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
+    video_filename = sprintf('%s_%s%s', base_name, timestamp, ext_name);
+    try
+        v = VideoWriter(video_filename, 'MPEG-4');
+        v.FrameRate = 12;
+        open(v);
+    catch ME
+        warning('GPSsimulator:VideoDisabled', '影片輸出停用：%s', ME.message);
+        write_video = false;
+        v = [];
+    end
+end
 
 %% 初始化 3D 繪圖環境
 fig = figure('Position', [100, 100, 800, 800], 'Color', 'w');
@@ -117,7 +141,7 @@ h_glo_vis = scatter3(nan, nan, nan, 50, 'g', 'filled'); % 綠
 h_gal_vis = scatter3(nan, nan, nan, 50, [1 0.5 0], 'filled'); % 橘色
 h_leo_vis = scatter3(nan, nan, nan, 40, 'b', 'filled'); % 藍
 
-distance_log = []; % [Time(s), System(1=GPS,2=GLO,3=GAL,4=LEO), ID, Dist(km), Elev(deg), AbsSq(km/s), RadSq(km/s)]
+distance_log = []; % true range, pseudorange, and error components
 elevation_mask = 10; % 仰角門檻 [度]
 
 disp('開始進行時間循環並生成多星系混合動畫...');
@@ -195,7 +219,13 @@ for idx = 1:length(t_array)
                 abs_speed = norm(satVel);
                 los_vec = dx_ecef / range;
                 radial_vel = dot(satVel', los_vec);
-                distance_log = [distance_log; t_sim, c_sys_id, c_sats(k,1), range/1000, elev, abs_speed/1000, radial_vel/1000];
+                [pseudorange_m, ~, error_terms] = applyMeasurementErrors(error_model, c_sys_id, c_sats(k,1), idx, satXYZ, satVel, NCU_XYZ, range);
+                distance_log = [distance_log; ...
+                    t_sim, c_sys_id, c_sats(k,1), ...
+                    range/1000, pseudorange_m/1000, error_terms.total_error_m, ...
+                    elev, abs_speed/1000, radial_vel/1000, ...
+                    error_terms.orbit_error_m, error_terms.receiver_clock_error_m, ...
+                    error_terms.satellite_clock_error_m, error_terms.dcb_m, error_terms.noise_m];
             end
         end
         vis_coords_all{sys} = vis_coords;
@@ -221,17 +251,26 @@ for idx = 1:length(t_array)
     drawnow;
     
     % 寫入影片
-    frame = getframe(fig);
-    writeVideo(v, frame);
+    if write_video
+        frame = getframe(fig);
+        writeVideo(v, frame);
+    end
 end
 
-close(v);
-disp(['動畫生成完畢，已儲存於目錄下: ', video_filename]);
+if write_video
+    close(v);
+    disp(['動畫生成完畢，已儲存於目錄下: ', video_filename]);
+else
+    disp('動畫輸出已略過，距離資料仍會儲存。');
+end
 
 %% 紀錄與匯出
 % System ID: 1=GPS, 2=GLONASS, 3=Galileo, 4=LEO
-T_dist = array2table(distance_log, 'VariableNames', {'Time_s', 'System', 'Sat_ID', 'Distance_km', 'Elevation_deg', 'Abs_Speed_km_s', 'Radial_Vel_km_s'});
-save('distance_data.mat', 'T_dist');
+T_dist = array2table(distance_log, 'VariableNames', {'Time_s', 'System', 'Sat_ID', ...
+    'True_Distance_km', 'Pseudorange_km', 'Total_Error_m', ...
+    'Elevation_deg', 'Abs_Speed_km_s', 'Radial_Vel_km_s', ...
+    'Orbit_Error_m', 'Receiver_Clock_Error_m', 'Satellite_Clock_Error_m', 'DCB_m', 'Noise_m'});
+save('distance_data.mat', 'T_dist', 'error_model');
 disp('----------------- 多系統可見衛星分析預覽 (前五筆) ---------------');
 disp('  System: 1=GPS, 2=GLO, 3=GAL, 4=LEO');
 disp(head(T_dist, 5));

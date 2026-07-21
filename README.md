@@ -1,30 +1,32 @@
 # GNSS + LEO Orbit Simulator
 
-這個資料夾是一個 MATLAB 軌道模擬實驗，用 NCU 測站作為接收機位置，模擬 GPS、GLONASS、Galileo 與 LEO 衛星星系在一天內的可視情況。
+這是一個 MATLAB 多星系軌道與接收機觀測值模擬器。程式以中央大學測站為接收機，模擬 GPS、GLONASS、Galileo 與 LEO 星系，並輸出幾何真值、帶誤差的 pseudorange，以及接近 RINEX observation 內容的 code、carrier phase、Doppler 與 C/N0。
 
-## 主要檔案
+## 檔案
 
-- `simulator.m`: 主程式，產生多星系軌道動畫與距離量測資料。
-- `kepler2ecef.m`: 將 Keplerian elements 轉成 ECEF 位置與速度。
-- `initializeMeasurementErrorModel.m`: 建立可重現的量測誤差狀態。
-- `applyMeasurementErrors.m`: 對可見衛星加入軌道、時鐘、DCB 與雜訊誤差。
-- `distance_data.mat`: 主程式輸出的 table 資料，變數名稱為 `T_dist`。
-- `orbit_animation.mp4`: 主程式輸出的 3D 動畫。
+- `simulator.m`: 主程式，計算軌道、可見衛星、量測值並輸出動畫與 MAT 資料。
+- `kepler2ecef.m`: 將 Keplerian elements 轉換為 ECEF 位置與速度。
+- `initializeMeasurementErrorModel.m`: 建立軌道、接收機/衛星時鐘、DCB 與 code noise。
+- `applyMeasurementErrors.m`: 將基本誤差加入幾何距離，產生 pseudorange。
+- `initializeSignalObservationModel.m`: 定義訊號頻率、波長、phase/Doppler/CN0 雜訊與追蹤情境。
+- `applySignalObservationModel.m`: 產生 code、carrier phase、Doppler、C/N0，並更新 ambiguity、lock time 與 LLI。
+- `distance_data.mat`: 輸出 `T_dist`、`T_obs`、`error_model` 與 `signal_model`。
+- `orbit_animation.mp4`: 軌道動畫。
 
 ## 星系設定
 
-| System ID | 系統 | 軌道高度 | 傾角 | 軌道面 x 每面衛星 |
+| System ID | 星系 | 軌道高度 | 傾角 | 軌道面 x 每面衛星數 |
 | --- | --- | --- | --- | --- |
 | 1 | GPS | 20200 km | 55 deg | 6 x 4 |
 | 2 | GLONASS | 19100 km | 64.8 deg | 3 x 8 |
 | 3 | Galileo | 23220 km | 56 deg | 3 x 10 |
 | 4 | LEO | 550 km | 97.7 deg | 6 x 10 |
 
-測站為 NCU，LLA = `[24.968223, 121.193490, 200]`。模擬時間為 24 小時，每 600 秒一筆 epoch，仰角遮罩為 10 度。
+接收機位置為 NCU，LLA = `[24.968223, 121.193490, 200]`。模擬時間為 24 小時，每 600 秒一個 epoch，elevation mask 為 10 deg。
 
-## 量測誤差模型
+## 基本距離誤差
 
-模擬現在同時輸出理想幾何距離與帶誤差的偽距：
+`T_dist.Pseudorange_km` 使用下式：
 
 ```text
 Pseudorange =
@@ -33,51 +35,84 @@ Pseudorange =
   + Receiver clock error
   - Satellite clock error
   + Differential code bias
-  + Receiver noise
+  + Code noise
 ```
 
-所有誤差分量都以 meter 記錄。模型使用固定亂數種子 `42`，所以重跑時結果可重現。若要調整誤差強度，修改 `initializeMeasurementErrorModel.m` 裡的 1-sigma 參數即可：
+所有誤差狀態先以 meter 表示，亂數種子固定為 `42`，因此相同設定會產生相同資料。
 
-- `orbit_radial_sigma_m`
-- `orbit_along_sigma_m`
-- `orbit_cross_sigma_m`
-- `orbit_random_walk_sigma_m`
-- `receiver_clock_initial_m`
-- `receiver_clock_random_walk_sigma_m`
-- `satellite_clock_bias_sigma_m`
-- `satellite_clock_random_walk_sigma_m`
-- `dcb_sigma_ns`
-- `noise_sigma_m`
+目前基本距離模型尚未加入 ionosphere、troposphere、relativistic correction、phase wind-up 與 multipath。軌道誤差目前直接投影到量測距離，適合測試 range error；未來產生嚴格的 RINEX OBS/NAV 組合時，應把軌道誤差移至 navigation/ephemeris 資料，OBS 則由 truth orbit 產生。
 
-目前尚未加入 ionosphere、troposphere、relativistic correction、phase wind-up 或 multipath 幾何模型；這些可以在 `applyMeasurementErrors.m` 中再以新的欄位擴充。
+## 訊號觀測模型
 
-## 輸出欄位
+目前每個星系先模擬一個訊號：
 
-`T_dist` 目前包含：
+| 星系 | 訊號 | 頻率 | 波長約值 | RINEX tracking code |
+| --- | --- | ---: | ---: | --- |
+| GPS | L1 C/A | 1575.42 MHz | 0.1903 m | 1C |
+| GLONASS | G1 C/A | 1602.00 MHz | 0.1871 m | 1C |
+| Galileo | E1 B/C | 1575.42 MHz | 0.1903 m | 1C |
+| LEO | L1-like | 1575.42 MHz | 0.1903 m | 1X |
 
-- `Time_s`: 模擬時間，單位 second。
-- `System`: 系統編號，1=GPS、2=GLONASS、3=Galileo、4=LEO。
-- `Sat_ID`: 系統內衛星 ID。
-- `True_Distance_km`: 理想幾何距離，單位 km。
-- `Pseudorange_km`: 加入誤差後的偽距，單位 km。
-- `Total_Error_m`: 偽距與理想距離的差值，單位 m。
-- `Elevation_deg`: 從 NCU 測站看的仰角。
-- `Abs_Speed_km_s`: 衛星 ECEF 速度大小。
-- `Radial_Vel_km_s`: 沿接收機視線方向的徑向速度。
-- `Orbit_Error_m`: 軌道位置誤差投影到 range 後的距離誤差。
-- `Receiver_Clock_Error_m`: 接收機時鐘偏差造成的距離誤差。
-- `Satellite_Clock_Error_m`: 衛星時鐘偏差造成的距離誤差。
-- `DCB_m`: differential code bias 造成的距離誤差。
-- `Noise_m`: 接收機量測雜訊。
+GLONASS 目前使用 G1 名義中心頻率。若要精確模擬 FDMA，需再加入每顆衛星的 frequency channel number。
 
-## 執行方式
+Carrier phase 以 cycle 輸出：
 
-在 MATLAB 中切到此資料夾後執行：
+```text
+L = (true range + orbit error + receiver clock - satellite clock
+     + phase bias + wavelength * integer ambiguity + phase noise) / wavelength
+```
+
+Doppler 以 Hz 輸出：
+
+```text
+D = -(range rate + receiver clock drift - satellite clock drift) / wavelength
+    + Doppler noise
+```
+
+C/N0 以 dB-Hz 輸出，使用仰角相關模型；仰角越低，平均 C/N0 越低。
+
+`initializeSignalObservationModel.m` 支援三種 scenario：
+
+- `"clean"`: 不主動產生 cycle slip 或 outage，保留基本訊號雜訊。
+- `"realistic"`: 目前預設；同樣不主動注入 slip/outage，適合先驗證 code/phase/Doppler 演算法。
+- `"cycle-slip"`: 在低仰角提高 cycle slip 與短暫 outage 機率；ambiguity 會跳變，`LLI=1`，lock time 重新計算。
+
+在 `simulator.m` 修改下列參數即可切換：
+
+```matlab
+[signal_model, observation_state] = initializeSignalObservationModel( ...
+    t_array, sats_per_system, "realistic");
+```
+
+即使沒有主動 outage，衛星離開 elevation mask 後再次出現也視為 reacquisition，會重設 lock time、調整 ambiguity 並將該筆 `LLI` 設為 1。
+
+## 輸出資料
+
+`T_dist` 保留原本的距離與誤差分解欄位，供既有分析程式繼續使用。
+
+`T_obs` 是後續 RINEX writer 的中間觀測表，主要欄位如下：
+
+- `Code_m`: code pseudorange，meter。
+- `Carrier_Phase_cycles`: carrier phase，cycle。
+- `Doppler_Hz`: Doppler，Hz。
+- `CN0_dBHz`: carrier-to-noise density，dB-Hz。
+- `LLI`: loss-of-lock indicator；本模型以 `1` 表示 reacquisition 或 cycle slip。
+- `LockTime_s`: 目前 ambiguity arc 的連續鎖定時間。
+- `Ambiguity_cycles`: 模擬器內部的整數 ambiguity truth。
+- `True_Range_m`、`Range_Rate_m_s`: 幾何真值，可用於驗證演算法。
+- `Is_Valid`: outage 時為 `false`，該列的 C/L/D/S 為 `NaN`。
+- `Signal`、`RINEX_Tracking_Code`: 訊號名稱與未來輸出 RINEX 時使用的 tracking code。
+
+`Ambiguity_cycles`、真實距離和各誤差狀態屬於 simulator truth/debug 資訊，不應直接寫入正式 RINEX observation file。
+
+## 執行
+
+在 MATLAB 工作資料夾執行：
 
 ```matlab
 simulator
 ```
 
-完成後會更新 `orbit_animation.mp4` 與 `distance_data.mat`。
+完成後會產生 `distance_data.mat` 與軌道動畫。如果 `orbit_animation.mp4` 被其他程式鎖定，程式會改用帶 timestamp 的檔名；若影片輸出仍失敗，量測資料仍會正常保存。
 
-如果 `orbit_animation.mp4` 正被 Windows 或播放器鎖住，程式會自動改用 `orbit_animation_yyyymmdd_HHMMSS.mp4`。若影片輸出完全不可用，程式仍會完成距離資料輸出。
+下一階段可用 `T_obs` 實作 RINEX 3 observation writer，並把 observation truth 與帶誤差的 navigation/ephemeris 分成兩個資料產品。

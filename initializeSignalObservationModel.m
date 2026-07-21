@@ -23,7 +23,7 @@ function [signal_model, observation_state] = initializeSignalObservationModel(t_
     signal_model.seed = 31415;
     signal_model.system_names = ["GPS", "GLONASS", "Galileo", "LEO"];
     signal_model.signal_names = ["L1 C/A", "G1 C/A", "E1 B/C", "L1-like"];
-    signal_model.rinex_tracking_codes = ["1C", "1C", "1C", "1X"];
+    signal_model.rinex_tracking_codes = ["1C", "1C", "1X", "1X"];
     signal_model.frequency_hz = [1575.42e6, 1602.00e6, 1575.42e6, 1575.42e6];
     signal_model.wavelength_m = c_light ./ signal_model.frequency_hz;
 

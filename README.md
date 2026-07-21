@@ -10,7 +10,9 @@
 - `applyMeasurementErrors.m`: 將基本誤差加入幾何距離，產生 pseudorange。
 - `initializeSignalObservationModel.m`: 定義訊號頻率、波長、phase/Doppler/CN0 雜訊與追蹤情境。
 - `applySignalObservationModel.m`: 產生 code、carrier phase、Doppler、C/N0，並更新 ambiguity、lock time 與 LLI。
-- `distance_data.mat`: 輸出 `T_dist`、`T_obs`、`error_model` 與 `signal_model`。
+- `writeRinexObs.m`: 將 `T_obs` 寫成 RINEX 3.05 mixed observation file。
+- `distance_data.mat`: 輸出 `T_dist`、`T_obs`、誤差模型與 RINEX metadata/summary。
+- `NCUS00TWN_U_20260010000_01D_10M_MO.rnx`: 預設的 RINEX 3.05 observation 輸出。
 - `orbit_animation.mp4`: 軌道動畫。
 
 ## 星系設定
@@ -50,7 +52,7 @@ Pseudorange =
 | --- | --- | ---: | ---: | --- |
 | GPS | L1 C/A | 1575.42 MHz | 0.1903 m | 1C |
 | GLONASS | G1 C/A | 1602.00 MHz | 0.1871 m | 1C |
-| Galileo | E1 B/C | 1575.42 MHz | 0.1903 m | 1C |
+| Galileo | E1 B/C | 1575.42 MHz | 0.1903 m | 1X |
 | LEO | L1-like | 1575.42 MHz | 0.1903 m | 1X |
 
 GLONASS 目前使用 G1 名義中心頻率。若要精確模擬 FDMA，需再加入每顆衛星的 frequency channel number。
@@ -90,7 +92,7 @@ C/N0 以 dB-Hz 輸出，使用仰角相關模型；仰角越低，平均 C/N0 �
 
 `T_dist` 保留原本的距離與誤差分解欄位，供既有分析程式繼續使用。
 
-`T_obs` 是後續 RINEX writer 的中間觀測表，主要欄位如下：
+`T_obs` 是 RINEX writer 的中間觀測表，主要欄位如下：
 
 - `Code_m`: code pseudorange，meter。
 - `Carrier_Phase_cycles`: carrier phase，cycle。
@@ -105,6 +107,30 @@ C/N0 以 dB-Hz 輸出，使用仰角相關模型；仰角越低，平均 C/N0 �
 
 `Ambiguity_cycles`、真實距離和各誤差狀態屬於 simulator truth/debug 資訊，不應直接寫入正式 RINEX observation file。
 
+## RINEX 3.05 輸出
+
+`writeRinexObs.m` 依 RINEX 3.05 固定欄位格式輸出：
+
+- GPS：`C1C L1C D1C S1C`
+- GLONASS：`C1C L1C D1C S1C`
+- Galileo：`C1X L1X D1X S1X`
+
+觀測單位分別為 pseudorange meter、carrier phase cycle、Doppler Hz 與 C/N0 dB-Hz。LLI 只寫在 carrier phase 欄位；SSI 由 `floor(CN0/6)` 限制在 1 到 9。Outage 的無效列不寫入 RINEX。
+
+預設 epoch 從 `2026-01-01 00:00:00 GPS` 開始，檔名為：
+
+```text
+NCUS00TWN_U_20260010000_01D_10M_MO.rnx
+```
+
+可在 `simulator.m` 修改 `rinex_filename` 與 `rinex_metadata`。`rinex_metadata.start_time` 的數值直接解讀為指定的 GNSS time system，程式不自行做 UTC/leap-second 轉換。
+
+RINEX 3.05 沒有可代表任意自訂 LEO constellation 的正式 system identifier，因此 LEO 不寫入標準 OBS 檔，但仍完整保留在 `T_obs`。若未來採用正式 LEO-PNT system code 或交換格式，再於 writer 增加對應 mapping。
+
+GLONASS 目前所有衛星在 RINEX header 以 frequency channel `0` 輸出，與名義 1602 MHz 模型一致。加入真實 FDMA channel 後，必須同步修改每顆衛星的頻率與 `GLONASS SLOT / FRQ #`。
+
+格式依據為 [RINEX 3.05 specification](https://files.igs.org/pub/data/format/rinex305.pdf)。
+
 ## 執行
 
 在 MATLAB 工作資料夾執行：
@@ -113,6 +139,6 @@ C/N0 以 dB-Hz 輸出，使用仰角相關模型；仰角越低，平均 C/N0 �
 simulator
 ```
 
-完成後會產生 `distance_data.mat` 與軌道動畫。如果 `orbit_animation.mp4` 被其他程式鎖定，程式會改用帶 timestamp 的檔名；若影片輸出仍失敗，量測資料仍會正常保存。
+完成後會產生 `distance_data.mat`、RINEX observation file 與軌道動畫。如果 `orbit_animation.mp4` 被其他程式鎖定，程式會改用帶 timestamp 的檔名；若影片輸出仍失敗，量測資料仍會正常保存。
 
-下一階段可用 `T_obs` 實作 RINEX 3 observation writer，並把 observation truth 與帶誤差的 navigation/ephemeris 分成兩個資料產品。
+RINEX OBS 目前已可直接送入支援 RINEX 3 的 parser。下一階段是產生對應的 navigation/ephemeris file，將 truth orbit 與提供給定位演算法的帶誤差軌道資料正式分離。

@@ -63,6 +63,15 @@ error_model = initializeMeasurementErrorModel(t_array, sats_per_system);
 [signal_model, observation_state] = initializeSignalObservationModel( ...
     t_array, sats_per_system, "realistic");
 
+% The calendar value is interpreted directly in GPS time for the RINEX file.
+rinex_filename = 'NCUS00TWN_U_20260010000_01D_10M_MO.rnx';
+rinex_metadata.start_time = datetime(2026, 1, 1, 0, 0, 0);
+rinex_metadata.time_system = 'GPS';
+rinex_metadata.interval_s = time_step;
+rinex_metadata.marker_name = 'NCU_SIM';
+rinex_metadata.marker_number = 'SIM0001';
+rinex_metadata.approx_position_xyz = NCU_XYZ;
+
 %% 初始化影片寫入器
 video_filename = 'orbit_animation.mp4';
 write_video = true;
@@ -291,9 +300,14 @@ T_obs = array2table(observation_log, 'VariableNames', {'Time_s', 'System', 'Sat_
     'Phase_Noise_m', 'Is_Valid'});
 T_obs.Signal = signal_model.signal_names(T_obs.System).';
 T_obs.RINEX_Tracking_Code = signal_model.rinex_tracking_codes(T_obs.System).';
-save('distance_data.mat', 'T_dist', 'T_obs', 'error_model', 'signal_model');
+rinex_summary = writeRinexObs(rinex_filename, T_obs, rinex_metadata);
+save('distance_data.mat', 'T_dist', 'T_obs', 'error_model', 'signal_model', ...
+    'rinex_metadata', 'rinex_summary');
 disp('----------------- 多系統可見衛星分析預覽 (前五筆) ---------------');
 disp('  System: 1=GPS, 2=GLO, 3=GAL, 4=LEO');
 disp(head(T_dist, 5));
 disp('----------------- Signal observation preview -----------------');
 disp(head(T_obs, 5));
+disp(['RINEX 3.05 observation file: ', char(rinex_summary.filename)]);
+disp(['RINEX observations written: ', num2str(rinex_summary.observations_written), ...
+    '; LEO rows kept in T_obs only: ', num2str(rinex_summary.leo_rows_skipped)]);

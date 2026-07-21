@@ -9,6 +9,9 @@ function error_model = initializeMeasurementErrorModel(t_array, sats_per_system)
     error_model.enabled = true;
     error_model.seed = 42;
     error_model.system_names = ["GPS", "GLONASS", "Galileo", "LEO"];
+    % Orbit errors describe the RAP orbit product. Keep this false when the
+    % observations will be evaluated with FIN/RAP SP3 products.
+    error_model.apply_orbit_error_to_observation = false;
 
     % 1-sigma values by system: GPS, GLONASS, Galileo, LEO.
     error_model.orbit_radial_sigma_m = [0.5, 0.8, 0.5, 3.0];

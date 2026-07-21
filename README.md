@@ -1,144 +1,166 @@
 # GNSS + LEO Orbit Simulator
 
-這是一個 MATLAB 多星系軌道與接收機觀測值模擬器。程式以中央大學測站為接收機，模擬 GPS、GLONASS、Galileo 與 LEO 星系，並輸出幾何真值、帶誤差的 pseudorange，以及接近 RINEX observation 內容的 code、carrier phase、Doppler 與 C/N0。
+這是一個 MATLAB 多星系衛星軌道與接收器觀測資料模擬器。模擬器建立 GPS、GLONASS、Galileo 與 LEO 星座，從 NCU 地面站計算可見衛星，並輸出：
 
-## 檔案
+- RINEX 3.05 observation file：code、carrier phase、Doppler、C/N0 與 LLI。
+- SP3-d FIN product：完全正確的模擬軌道與實際衛星鐘差。
+- SP3-d RAP product：帶有 RAC 軌道產品誤差與鐘產品估計誤差的軌道產品。
+- `distance_data.mat`：完整 truth、觀測值、誤差狀態及產品表格。
+- `orbit_animation.mp4`：星座與可見衛星動畫。
 
-- `simulator.m`: 主程式，計算軌道、可見衛星、量測值並輸出動畫與 MAT 資料。
-- `kepler2ecef.m`: 將 Keplerian elements 轉換為 ECEF 位置與速度。
-- `initializeMeasurementErrorModel.m`: 建立軌道、接收機/衛星時鐘、DCB 與 code noise。
-- `applyMeasurementErrors.m`: 將基本誤差加入幾何距離，產生 pseudorange。
-- `initializeSignalObservationModel.m`: 定義訊號頻率、波長、phase/Doppler/CN0 雜訊與追蹤情境。
-- `applySignalObservationModel.m`: 產生 code、carrier phase、Doppler、C/N0，並更新 ambiguity、lock time 與 LLI。
-- `writeRinexObs.m`: 將 `T_obs` 寫成 RINEX 3.05 mixed observation file。
-- `distance_data.mat`: 輸出 `T_dist`、`T_obs`、誤差模型與 RINEX metadata/summary。
-- `NCUS00TWN_U_20260010000_01D_10M_MO.rnx`: 預設的 RINEX 3.05 observation 輸出。
-- `orbit_animation.mp4`: 軌道動畫。
+FIN/RAP 是此模擬器中的產品品質分類，用來模仿 IGS final/rapid 產品的使用方式；輸出不是官方 IGS 產品。
 
-## 星系設定
+## 主要檔案
 
-| System ID | 星系 | 軌道高度 | 傾角 | 軌道面 x 每面衛星數 |
-| --- | --- | --- | --- | --- |
+- `simulator.m`：主程式與輸出流程。
+- `kepler2ecef.m`：Kepler 軌道狀態轉 ECEF 座標及速度。
+- `initializeMeasurementErrorModel.m`：軌道、接收器鐘、衛星鐘、DCB 與 code noise。
+- `applyMeasurementErrors.m`：產生 pseudorange 誤差項。
+- `initializeSignalObservationModel.m`：訊號頻率、ambiguity、phase/Doppler noise、cycle slip 與 outage。
+- `applySignalObservationModel.m`：產生 code、carrier phase、Doppler、C/N0、LLI 與 lock time。
+- `racErrorToEcef.m`：將 radial/along/cross-track 誤差轉為 ECEF。
+- `generatePreciseProducts.m`：建立 FIN 與 RAP 的衛星位置/鐘差表格。
+- `writeRinexObs.m`：輸出 RINEX 3.05 mixed observation file。
+- `writeSp3Product.m`：輸出 mixed-system SP3-d position/clock product。
+
+## 星座設定
+
+| System ID | 星系 | 高度 | 傾角 | 軌道面 x 每面衛星 |
+| --- | --- | ---: | ---: | ---: |
 | 1 | GPS | 20200 km | 55 deg | 6 x 4 |
 | 2 | GLONASS | 19100 km | 64.8 deg | 3 x 8 |
 | 3 | Galileo | 23220 km | 56 deg | 3 x 10 |
 | 4 | LEO | 550 km | 97.7 deg | 6 x 10 |
 
-接收機位置為 NCU，LLA = `[24.968223, 121.193490, 200]`。模擬時間為 24 小時，每 600 秒一個 epoch，elevation mask 為 10 deg。
+接收站為 NCU，LLA 為 `[24.968223, 121.193490, 200]`。模擬時間為 24 小時，間隔 600 秒，包含首尾共 145 個 epoch；elevation mask 為 10 deg。
 
-## 基本距離誤差
+## 觀測模型
 
-`T_dist.Pseudorange_km` 使用下式：
+Pseudorange 使用：
 
 ```text
-Pseudorange =
-    True range
-  + Orbit error projected to range
-  + Receiver clock error
-  - Satellite clock error
-  + Differential code bias
-  + Code noise
+P = geometric range
+  + receiver clock
+  - satellite clock
+  + DCB
+  + code noise
 ```
 
-所有誤差狀態先以 meter 表示，亂數種子固定為 `42`，因此相同設定會產生相同資料。
-
-目前基本距離模型尚未加入 ionosphere、troposphere、relativistic correction、phase wind-up 與 multipath。軌道誤差目前直接投影到量測距離，適合測試 range error；未來產生嚴格的 RINEX OBS/NAV 組合時，應把軌道誤差移至 navigation/ephemeris 資料，OBS 則由 truth orbit 產生。
-
-## 訊號觀測模型
-
-目前每個星系先模擬一個訊號：
-
-| 星系 | 訊號 | 頻率 | 波長約值 | RINEX tracking code |
-| --- | --- | ---: | ---: | --- |
-| GPS | L1 C/A | 1575.42 MHz | 0.1903 m | 1C |
-| GLONASS | G1 C/A | 1602.00 MHz | 0.1871 m | 1C |
-| Galileo | E1 B/C | 1575.42 MHz | 0.1903 m | 1X |
-| LEO | L1-like | 1575.42 MHz | 0.1903 m | 1X |
-
-GLONASS 目前使用 G1 名義中心頻率。若要精確模擬 FDMA，需再加入每顆衛星的 frequency channel number。
-
-Carrier phase 以 cycle 輸出：
+Carrier phase 使用：
 
 ```text
-L = (true range + orbit error + receiver clock - satellite clock
-     + phase bias + wavelength * integer ambiguity + phase noise) / wavelength
+L = (geometric range
+     + receiver clock - satellite clock
+     + phase bias + wavelength * integer ambiguity + phase noise)
+    / wavelength
 ```
 
-Doppler 以 Hz 輸出：
+Doppler 使用：
 
 ```text
-D = -(range rate + receiver clock drift - satellite clock drift) / wavelength
+D = -(range rate + receiver clock drift - satellite clock drift)
+    / wavelength
     + Doppler noise
 ```
 
-C/N0 以 dB-Hz 輸出，使用仰角相關模型；仰角越低，平均 C/N0 越低。
+軌道誤差預設不直接加入 OBS，而是寫入 RAP SP3。如此同一份觀測檔搭配 FIN 或 RAP 解算時，殘差會由所使用的產品自然產生，不會將同一個軌道誤差重複計算。`T_dist.Orbit_Error_m` 保留該誤差投影值供分析，`Applied_Orbit_Error_m` 預設為零。
 
-`initializeSignalObservationModel.m` 支援三種 scenario：
-
-- `"clean"`: 不主動產生 cycle slip 或 outage，保留基本訊號雜訊。
-- `"realistic"`: 目前預設；同樣不主動注入 slip/outage，適合先驗證 code/phase/Doppler 演算法。
-- `"cycle-slip"`: 在低仰角提高 cycle slip 與短暫 outage 機率；ambiguity 會跳變，`LLI=1`，lock time 重新計算。
-
-在 `simulator.m` 修改下列參數即可切換：
+若要重現舊式「直接污染量測距離」的實驗，可設定：
 
 ```matlab
-[signal_model, observation_state] = initializeSignalObservationModel( ...
-    t_array, sats_per_system, "realistic");
+error_model.apply_orbit_error_to_observation = true;
 ```
 
-即使沒有主動 outage，衛星離開 elevation mask 後再次出現也視為 reacquisition，會重設 lock time、調整 ambiguity 並將該筆 `LLI` 設為 1。
+但此模式不應再搭配含有相同軌道誤差的 RAP 產品進行效能比較。
 
-## 輸出資料
+## 訊號與追蹤事件
 
-`T_dist` 保留原本的距離與誤差分解欄位，供既有分析程式繼續使用。
+| 星系 | 訊號 | 頻率 | RINEX tracking code |
+| --- | --- | ---: | --- |
+| GPS | L1 C/A | 1575.42 MHz | 1C |
+| GLONASS | G1 C/A | 1602.00 MHz | 1C |
+| Galileo | E1 B/C | 1575.42 MHz | 1X |
+| LEO | L1-like | 1575.42 MHz | 1X |
 
-`T_obs` 是 RINEX writer 的中間觀測表，主要欄位如下：
+`initializeSignalObservationModel.m` 支援：
 
-- `Code_m`: code pseudorange，meter。
-- `Carrier_Phase_cycles`: carrier phase，cycle。
-- `Doppler_Hz`: Doppler，Hz。
-- `CN0_dBHz`: carrier-to-noise density，dB-Hz。
-- `LLI`: loss-of-lock indicator；本模型以 `1` 表示 reacquisition 或 cycle slip。
-- `LockTime_s`: 目前 ambiguity arc 的連續鎖定時間。
-- `Ambiguity_cycles`: 模擬器內部的整數 ambiguity truth。
-- `True_Range_m`、`Range_Rate_m_s`: 幾何真值，可用於驗證演算法。
-- `Is_Valid`: outage 時為 `false`，該列的 C/L/D/S 為 `NaN`。
-- `Signal`、`RINEX_Tracking_Code`: 訊號名稱與未來輸出 RINEX 時使用的 tracking code。
+- `"clean"`：關閉 cycle slip 與 outage，保留一般量測雜訊。
+- `"realistic"`：預設模式，保留一般訊號雜訊但不主動注入 slip/outage。
+- `"cycle-slip"`：提高 slip/outage 機率，方便測試 ambiguity reset 與 LLI。
 
-`Ambiguity_cycles`、真實距離和各誤差狀態屬於 simulator truth/debug 資訊，不應直接寫入正式 RINEX observation file。
+Outage 的 C/L/D/S 設為 `NaN`；重新捕獲或 cycle slip 時 `LLI=1`，更新 ambiguity 並重設 lock time。
 
-## RINEX 3.05 輸出
+## RINEX OBS 輸出
 
-`writeRinexObs.m` 依 RINEX 3.05 固定欄位格式輸出：
-
-- GPS：`C1C L1C D1C S1C`
-- GLONASS：`C1C L1C D1C S1C`
-- Galileo：`C1X L1X D1X S1X`
-
-觀測單位分別為 pseudorange meter、carrier phase cycle、Doppler Hz 與 C/N0 dB-Hz。LLI 只寫在 carrier phase 欄位；SSI 由 `floor(CN0/6)` 限制在 1 到 9。Outage 的無效列不寫入 RINEX。
-
-預設 epoch 從 `2026-01-01 00:00:00 GPS` 開始，檔名為：
+預設檔名：
 
 ```text
 NCUS00TWN_U_20260010000_01D_10M_MO.rnx
 ```
 
-可在 `simulator.m` 修改 `rinex_filename` 與 `rinex_metadata`。`rinex_metadata.start_time` 的數值直接解讀為指定的 GNSS time system，程式不自行做 UTC/leap-second 轉換。
+輸出 observation types：
 
-RINEX 3.05 沒有可代表任意自訂 LEO constellation 的正式 system identifier，因此 LEO 不寫入標準 OBS 檔，但仍完整保留在 `T_obs`。若未來採用正式 LEO-PNT system code 或交換格式，再於 writer 增加對應 mapping。
+- GPS：`C1C L1C D1C S1C`
+- GLONASS：`C1C L1C D1C S1C`
+- Galileo：`C1X L1X D1X S1X`
 
-GLONASS 目前所有衛星在 RINEX header 以 frequency channel `0` 輸出，與名義 1602 MHz 模型一致。加入真實 FDMA channel 後，必須同步修改每顆衛星的頻率與 `GLONASS SLOT / FRQ #`。
+RINEX 3.05 沒有通用 LEO constellation system code，因此 LEO 觀測保留在 `T_obs`，不寫入這份標準 RINEX OBS。
 
-格式依據為 [RINEX 3.05 specification](https://files.igs.org/pub/data/format/rinex305.pdf)。
+## FIN/RAP SP3 輸出
 
-## 執行
+預設檔名遵循 IGS long filename 的命名風格：
 
-在 MATLAB 工作資料夾執行：
+```text
+SIM0OPSFIN_20260010000_01D_10M_ORB.SP3
+SIM0OPSRAP_20260010000_01D_10M_ORB.SP3
+```
+
+兩個檔案均為 SP3-d mixed-system position product，包含：
+
+- `G01-G24`：GPS
+- `R01-R24`：GLONASS
+- `E01-E30`：Galileo
+- `L01-L60`：LEO
+- 位置單位：km，寫入 `P` record。
+- 衛星鐘差單位：microsecond，寫入同一個 `P` record。
+- 時間系統：GPS。
+
+FIN 內容：
+
+```text
+position = simulator truth position
+clock    = actual simulated satellite clock
+```
+
+RAP 內容：
+
+```text
+position = truth position + RAC orbit product error transformed to ECEF
+clock    = actual satellite clock + independent rapid clock product error
+```
+
+目前的固定亂數種子使結果可重現：measurement error seed 為 `42`，RAP clock product error seed 為 `27182`。
+
+## MAT 輸出
+
+`distance_data.mat` 包含：
+
+- `T_dist`：幾何距離、pseudorange 與各誤差分解。
+- `T_obs`：code、carrier phase、Doppler、C/N0、LLI、lock time 與 truth 欄位。
+- `T_fin`、`T_rap`：寫入兩個 SP3 的完整衛星狀態。
+- `error_model`、`signal_model`、`precise_product_model`：可重現的模型參數與誤差狀態。
+- RINEX/SP3 metadata 與 write summary。
+
+## 執行方式
+
+在 MATLAB 工作目錄中執行：
 
 ```matlab
 simulator
 ```
 
-完成後會產生 `distance_data.mat`、RINEX observation file 與軌道動畫。如果 `orbit_animation.mp4` 被其他程式鎖定，程式會改用帶 timestamp 的檔名；若影片輸出仍失敗，量測資料仍會正常保存。
+## 格式參考
 
-RINEX OBS 目前已可直接送入支援 RINEX 3 的 parser。下一階段是產生對應的 navigation/ephemeris file，將 truth orbit 與提供給定位演算法的帶誤差軌道資料正式分離。
+- [RINEX 3.05 specification](https://files.igs.org/pub/data/format/rinex305.pdf)
+- [SP3-d specification](https://files.igs.org/pub/data/format/sp3d.pdf)
+- [IGS long product filename guideline](https://files.igs.org/pub/resource/guidelines/Guideline_for_the_transition_of_the_IGS_products_to_IGS20_and_long_filenames_v2.0.pdf)
